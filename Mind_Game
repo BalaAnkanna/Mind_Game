@@ -1,0 +1,262 @@
+import tkinter as tk
+import random
+import time
+from tkinter import messagebox
+from functools import partial
+import os
+
+class MemoryGame:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("🐾 Memory Card Game 🧠")
+        self.root.configure(bg="#2c3e50")
+        self.root.attributes("-fullscreen", True)  # FULLSCREEN ON START
+        self.root.bind("<Escape>", self.exit_fullscreen)  # Press ESC to exit fullscreen
+        self.root.protocol("WM_DELETE_WINDOW", self.confirm_exit)  # Confirm on window close
+        self.theme = "dark"
+
+        self.emojis_pool = [
+            '🐶', '🐱', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼',
+            '🐨', '🐯', '🦁', '🐮', '🐷', '🐸', '🐵', '🐔',
+            '🦄', '🐙', '🦋', '🐞', '🐢', '🐍', '🦖', '🦕',
+            '🐝', '🐬', '🐳', '🐊', '🦓', '🦍', '🦝', '🦜',
+            '🦂', '🦗', '🦇', '🐲', '🪱', '🪰', '🪲', '🪳'
+        ]
+
+        self.card_size = 4  # default 4x4 (Easy)
+        self.card_count = self.card_size ** 2
+
+        self.player_name = "Player"
+        self.cards = []
+        self.buttons = []
+        self.flipped_cards = []
+        self.matched_pairs = 0
+        self.moves = 0
+        self.start_time = time.time()
+        self.timer_running = True
+
+        # Fonts for fullscreen scaling
+        self.font_large = ("Arial", 28)
+        self.font_medium = ("Arial", 20)
+        self.font_small = ("Arial", 16)
+
+        self.init_widgets()
+        self.create_board()
+        self.update_timer()
+        self.update_high_score_label()
+
+    def confirm_exit(self):
+        if messagebox.askokcancel("Quit", "Are you sure you want to quit? Unsaved progress will be lost."):
+            self.root.destroy()
+
+    def exit_fullscreen(self, event=None):
+        self.root.attributes("-fullscreen", False)
+
+    def init_widgets(self):
+        # High Score display at top
+        self.high_score_label = tk.Label(self.root, text="Best Score: None Yet", 
+                                         font=self.font_medium, fg="yellow", bg="#2c3e50")
+        self.high_score_label.pack(pady=(10, 5))
+
+        # Player name input
+        name_frame = tk.Frame(self.root, bg="#2c3e50")
+        tk.Label(name_frame, text="Enter Name:", font=self.font_medium, fg="white", bg="#2c3e50").pack(side=tk.LEFT)
+        self.name_entry = tk.Entry(name_frame, font=self.font_medium)
+        self.name_entry.pack(side=tk.LEFT)
+        self.name_entry.insert(0, self.player_name)
+        name_frame.pack(pady=10)
+
+        # Difficulty selection
+        diff_frame = tk.Frame(self.root, bg="#2c3e50")
+        tk.Label(diff_frame, text="Difficulty:", font=self.font_medium, fg="white", bg="#2c3e50").pack(side=tk.LEFT)
+        self.diff_var = tk.StringVar(value="Easy")
+        for level in ["Easy", "Medium", "Hard"]:
+            tk.Radiobutton(diff_frame, text=level, variable=self.diff_var, value=level,
+                           command=self.change_difficulty, bg="#2c3e50", fg="white",
+                           font=self.font_medium).pack(side=tk.LEFT, padx=10)
+        diff_frame.pack(pady=10)
+
+        # Button frame for theme, restart, and quit
+        button_frame = tk.Frame(self.root, bg="#2c3e50")
+        self.theme_button = tk.Button(button_frame, text="Switch Theme", command=self.toggle_theme,
+                                      font=self.font_medium, bg="#16a085", fg="white")
+        self.theme_button.pack(side=tk.LEFT, padx=10)
+
+        self.restart_button = tk.Button(button_frame, text="Restart Game", font=self.font_medium,
+                                        bg="#e74c3c", fg="white", command=self.restart_game)
+        self.restart_button.pack(side=tk.LEFT, padx=10)
+
+        self.quit_button = tk.Button(button_frame, text="Quit", font=self.font_medium,
+                                     bg="#34495e", fg="white", command=self.confirm_exit)
+        self.quit_button.pack(side=tk.LEFT, padx=10)
+
+        button_frame.pack(pady=10)
+
+        # Timer and moves
+        self.timer_label = tk.Label(self.root, text="Time: 0s", font=self.font_large, fg="white", bg="#2c3e50")
+        self.timer_label.pack()
+
+        self.moves_label = tk.Label(self.root, text="Moves: 0", font=self.font_large, fg="white", bg="#2c3e50")
+        self.moves_label.pack()
+
+        self.pairs_label = tk.Label(self.root, text="Pairs found: 0", font=self.font_large, fg="white", bg="#2c3e50")
+        self.pairs_label.pack()
+
+        # Frame for board
+        self.frame = tk.Frame(self.root, bg="#2c3e50")
+        self.frame.pack(pady=20, expand=True, fill='both')
+
+    def update_high_score_label(self):
+        # Read high_scores.txt and display best score (lowest moves, then lowest time)
+        if not os.path.exists("high_scores.txt"):
+            self.high_score_label.config(text="Best Score: None Yet")
+            return
+
+        best_score = None
+        try:
+            with open("high_scores.txt", "r") as f:
+                for line in f:
+                    # Expected format: Name - Moves: X, Time: Ys
+                    parts = line.strip().split(" - Moves: ")
+                    if len(parts) != 2:
+                        continue
+                    name = parts[0]
+                    moves_part, time_part = parts[1].split(", Time: ")
+                    moves = int(moves_part)
+                    time_sec = int(time_part[:-1])  # remove trailing 's'
+
+                    if best_score is None:
+                        best_score = (name, moves, time_sec)
+                    else:
+                        # Choose best: lowest moves, then lowest time
+                        if moves < best_score[1] or (moves == best_score[1] and time_sec < best_score[2]):
+                            best_score = (name, moves, time_sec)
+
+            if best_score:
+                text = f"Best Score: {best_score[0]} - Moves: {best_score[1]}, Time: {best_score[2]}s"
+                self.high_score_label.config(text=text)
+            else:
+                self.high_score_label.config(text="Best Score: None Yet")
+        except Exception as e:
+            self.high_score_label.config(text="Best Score: Error reading file")
+
+    def change_difficulty(self):
+        levels = {"Easy": 4, "Medium": 6, "Hard": 8}
+        self.card_size = levels[self.diff_var.get()]
+        self.card_count = self.card_size ** 2
+        self.restart_game()
+
+    def toggle_theme(self):
+        self.theme = "light" if self.theme == "dark" else "dark"
+        bg = "white" if self.theme == "light" else "#2c3e50"
+        fg = "black" if self.theme == "light" else "white"
+        self.root.configure(bg=bg)
+        for widget in self.root.winfo_children():
+            try:
+                widget.configure(bg=bg, fg=fg)
+            except:
+                pass
+
+    def create_board(self):
+        needed = self.card_count // 2
+        if needed > len(self.emojis_pool):
+            base_emojis = self.emojis_pool.copy()
+            extra = needed - len(base_emojis)
+            base_emojis += [f"#{i}" for i in range(extra)]
+            selected = base_emojis
+        else:
+            selected = random.sample(self.emojis_pool, needed)
+
+        self.cards = selected * 2
+        random.shuffle(self.cards)
+
+        self.buttons = []
+        for widget in self.frame.winfo_children():
+            widget.destroy()
+
+        # Button size and font adjusted for fullscreen
+        btn_width = 6
+        btn_height = 3
+        font_size = 40  # Larger emoji font
+
+        for i in range(self.card_size):
+            for j in range(self.card_size):
+                index = i * self.card_size + j
+                btn = tk.Button(self.frame, text='❓', font=("Arial", font_size), width=btn_width, height=btn_height,
+                                bg="#2980b9", fg="white", relief="raised", bd=5)
+                btn.grid(row=i, column=j, padx=8, pady=8, sticky="nsew")
+                btn.config(command=partial(self.flip_card, btn, index))
+                self.buttons.append((btn, self.cards[index]))
+
+        # Make grid cells expand evenly to fill frame
+        for i in range(self.card_size):
+            self.frame.grid_rowconfigure(i, weight=1)
+            self.frame.grid_columnconfigure(i, weight=1)
+
+    def flip_card(self, button, index):
+        if len(self.flipped_cards) == 2 or button['state'] == 'disabled':
+            return
+
+        button['text'] = self.cards[index]
+        button['state'] = 'disabled'
+        button['bg'] = "#f1c40f"
+        self.flipped_cards.append((button, self.cards[index]))
+
+        if len(self.flipped_cards) == 2:
+            self.root.after(600, self.check_match)
+
+    def check_match(self):
+        self.moves += 1
+        self.moves_label.config(text=f"Moves: {self.moves}")
+
+        card1, val1 = self.flipped_cards[0]
+        card2, val2 = self.flipped_cards[1]
+
+        if val1 == val2:
+            card1['bg'] = card2['bg'] = "#2ecc71"
+            self.matched_pairs += 1
+            self.pairs_label.config(text=f"Pairs found: {self.matched_pairs}")
+            if self.matched_pairs == self.card_count // 2:
+                self.end_game()
+        else:
+            for btn, _ in self.flipped_cards:
+                btn['text'] = '❓'
+                btn['state'] = 'normal'
+                btn['bg'] = "#2980b9"
+
+        self.flipped_cards = []
+
+    def end_game(self):
+        self.timer_running = False
+        elapsed = int(time.time() - self.start_time)
+        name = self.name_entry.get().strip() or "Player"
+        score = f"{name} - Moves: {self.moves}, Time: {elapsed}s"
+
+        with open("high_scores.txt", "a") as f:
+            f.write(score + "\n")
+
+        self.update_high_score_label()
+        messagebox.showinfo("Victory!", f"🎉 {score}")
+
+    def update_timer(self):
+        if self.timer_running:
+            elapsed = int(time.time() - self.start_time)
+            self.timer_label.config(text=f"Time: {elapsed}s")
+            self.root.after(1000, self.update_timer)
+
+    def restart_game(self):
+        self.player_name = self.name_entry.get()
+        self.flipped_cards = []
+        self.matched_pairs = 0
+        self.moves = 0
+        self.start_time = time.time()
+        self.timer_running = True
+        self.moves_label.config(text="Moves: 0")
+        self.pairs_label.config(text="Pairs found: 0")
+        self.timer_label.config(text="Time: 0s")
+        self.create_board()
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    game = MemoryGame(root)
+    root.mainloop()
